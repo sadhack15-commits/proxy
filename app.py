@@ -148,7 +148,16 @@ def home():
     current_ip = ipv6_rotator.current_ipv6
     uptime = datetime.now() - datetime.fromisoformat(stats['uptime_start'])
     
-    html = f"""
+    # Format stats
+    total_requests = stats['total_requests']
+    successful = stats['successful_requests']
+    success_rate = (successful / max(total_requests, 1) * 100)
+    rotations = stats['rotations']
+    pool_size = len(ipv6_rotator.ipv6_pool)
+    uptime_days = uptime.days
+    uptime_hours = uptime.seconds // 3600
+    
+    html = """
     <!DOCTYPE html>
     <html>
     <head>
@@ -315,29 +324,27 @@ def home():
                 <div class="stats">
                     <div class="stat-box">
                         <div class="stat-label">Current IPv6</div>
-                        <div class="stat-value" style="font-size: 0.8em;">{current_ip[:20]}...</div>
+                        <div class="stat-value" style="font-size: 0.8em;">""" + current_ip[:20] + """...</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Total Requests</div>
-                        <div class="stat-value">{stats['total_requests']}</div>
+                        <div class="stat-value">""" + str(total_requests) + """</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Success Rate</div>
-                        <div class="stat-value">
-                            {(stats['successful_requests'] / max(stats['total_requests'], 1) * 100):.0f}%
-                        </div>
+                        <div class="stat-value">""" + f"{success_rate:.0f}" + """%</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Rotations</div>
-                        <div class="stat-value">{stats['rotations']}</div>
+                        <div class="stat-value">""" + str(rotations) + """</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Uptime</div>
-                        <div class="stat-value">{uptime.days}d {uptime.seconds//3600}h</div>
+                        <div class="stat-value">""" + str(uptime_days) + """d """ + str(uptime_hours) + """h</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">IPv6 Pool</div>
-                        <div class="stat-value">{len(ipv6_rotator.ipv6_pool)}</div>
+                        <div class="stat-value">""" + str(pool_size) + """</div>
                     </div>
                 </div>
             </div>
@@ -374,7 +381,7 @@ PROXY = <span class="string">"https://your-app.onrender.com"</span>
 <span class="comment"># Send request through proxy</span>
 response = requests.get(
     PROXY + <span class="string">"/proxy"</span>,
-    params=&#123;<span class="string">"url"</span>: <span class="string">"https://httpbin.org/ip"</span>&#125;
+    params={<span class="string">"url"</span>: <span class="string">"https://httpbin.org/ip"</span>}
 )
 
 <span class="keyword">print</span>(response.json())</div>
