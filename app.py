@@ -1,8 +1,8 @@
 """
-Rotating Proxy Server - Deploy trên Render.com
-Chỉ cần 1 VPS, tự động rotate IPv6 addresses
+Complete Rotating Proxy Server - Production Ready
+Deploy trên Render.com với Gunicorn
+Auto-rotate IPv6 mỗi 3 giờ
 Public proxy 24/7 với UptimeRobot
-Anti-Cloudflare & Rate limiting
 """
 
 from flask import Flask, request, Response, jsonify
@@ -11,10 +11,8 @@ import time
 import threading
 from datetime import datetime, timedelta
 import random
-import hashlib
 import os
 from collections import defaultdict
-import socket
 
 app = Flask(__name__)
 
@@ -50,22 +48,15 @@ class IPv6Rotator:
         self.start_background_worker()
     
     def generate_ipv6_pool(self):
-        """
-        Generate pool of IPv6 addresses
-        Render/VPS thường có IPv6 subnet /64 hoặc /48
-        """
-        # IPv6 base (thay bằng subnet của VPS)
-        # Format: 2001:db8::/64 -> có thể dùng 2^64 addresses
-        ipv6_base = "2001:db8::"  # Thay bằng IPv6 subnet thực của bạn
+        """Generate pool of IPv6 addresses"""
+        ipv6_base = "2001:db8::"
         
-        # Generate 1000 random IPv6 trong subnet
         for i in range(1000):
-            # Random hex suffix
             suffix = ''.join(random.choices('0123456789abcdef', k=16))
-            ipv6 = f"{ipv6_base}{suffix[:4]}:{suffix[4:8]}:{suffix[8:12]}:{suffix[12:16]}"
+            ipv6 = ipv6_base + suffix[:4] + ':' + suffix[4:8] + ':' + suffix[8:12] + ':' + suffix[12:16]
             self.ipv6_pool.append(ipv6)
         
-        print(f"✅ Generated {len(self.ipv6_pool)} IPv6 addresses")
+        print("✅ Generated " + str(len(self.ipv6_pool)) + " IPv6 addresses")
     
     def rotate_ipv6(self):
         """Rotate sang IPv6 mới"""
@@ -74,7 +65,7 @@ class IPv6Rotator:
                 self.current_ipv6 = random.choice(self.ipv6_pool)
                 self.last_rotation = datetime.now()
                 self.stats['rotations'] += 1
-                print(f"[{datetime.now()}] 🔄 Rotated to: {self.current_ipv6}")
+                print("[" + str(datetime.now()) + "] 🔄 Rotated to: " + self.current_ipv6)
     
     def should_rotate(self):
         """Check if should rotate"""
@@ -87,9 +78,9 @@ class IPv6Rotator:
             try:
                 if self.should_rotate():
                     self.rotate_ipv6()
-                time.sleep(300)  # Check every 5 minutes
+                time.sleep(300)
             except Exception as e:
-                print(f"Background worker error: {e}")
+                print("Background worker error: " + str(e))
                 time.sleep(60)
     
     def start_background_worker(self):
@@ -101,13 +92,11 @@ class IPv6Rotator:
         """Rate limiting: 60 requests/minute per IP"""
         now = time.time()
         
-        # Clean old requests
         self.rate_limits[client_ip] = [
             ts for ts in self.rate_limits[client_ip]
             if now - ts < window
         ]
         
-        # Check limit
         if len(self.rate_limits[client_ip]) >= max_requests:
             return False
         
@@ -148,7 +137,6 @@ def home():
     current_ip = ipv6_rotator.current_ipv6
     uptime = datetime.now() - datetime.fromisoformat(stats['uptime_start'])
     
-    # Format stats
     total_requests = stats['total_requests']
     successful = stats['successful_requests']
     success_rate = (successful / max(total_requests, 1) * 100)
@@ -165,40 +153,40 @@ def home():
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ 
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { 
                 font-family: -apple-system, system-ui, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 min-height: 100vh;
                 padding: 20px;
-            }}
-            .container {{ 
+            }
+            .container { 
                 max-width: 1000px;
                 margin: 0 auto;
                 background: white;
                 padding: 40px;
                 border-radius: 20px;
-                box-shadow: 0 25px 50px rgba(0,0,0,0.3);
-            }}
-            h1 {{ 
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            }
+            h1 { 
                 background: linear-gradient(135deg, #667eea, #764ba2);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
                 font-size: 2.5em;
                 margin-bottom: 10px;
                 text-align: center;
-            }}
-            .subtitle {{
+            }
+            .subtitle {
                 text-align: center;
                 color: #666;
                 margin-bottom: 30px;
                 font-size: 1.1em;
-            }}
-            .badges {{
+            }
+            .badges {
                 text-align: center;
                 margin: 20px 0;
-            }}
-            .badge {{
+            }
+            .badge {
                 display: inline-block;
                 background: #4CAF50;
                 color: white;
@@ -207,47 +195,47 @@ def home():
                 margin: 5px;
                 font-size: 0.9em;
                 font-weight: 600;
-            }}
-            .badge.orange {{ background: #ff9800; }}
-            .badge.blue {{ background: #2196F3; }}
-            .status-card {{ 
+            }
+            .badge.orange { background: #ff9800; }
+            .badge.blue { background: #2196F3; }
+            .status-card { 
                 background: linear-gradient(135deg, #667eea, #764ba2);
                 color: white;
                 padding: 30px;
                 border-radius: 15px;
                 margin: 25px 0;
                 box-shadow: 0 10px 30px rgba(102,126,234,0.3);
-            }}
-            .stats {{
+            }
+            .stats {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
                 gap: 15px;
                 margin-top: 20px;
-            }}
-            .stat-box {{
+            }
+            .stat-box {
                 background: rgba(255,255,255,0.15);
                 padding: 20px;
                 border-radius: 10px;
                 text-align: center;
                 backdrop-filter: blur(10px);
-            }}
-            .stat-label {{ 
+            }
+            .stat-label { 
                 opacity: 0.9;
                 font-size: 0.85em;
                 margin-bottom: 8px;
-            }}
-            .stat-value {{ 
+            }
+            .stat-value { 
                 font-size: 1.8em;
                 font-weight: bold;
-            }}
-            .endpoint {{
+            }
+            .endpoint {
                 background: #f8f9fa;
                 padding: 20px;
                 margin: 15px 0;
                 border-radius: 10px;
                 border-left: 4px solid #667eea;
-            }}
-            .method {{
+            }
+            .method {
                 display: inline-block;
                 background: #667eea;
                 color: white;
@@ -256,8 +244,8 @@ def home():
                 font-weight: bold;
                 font-size: 0.85em;
                 margin-right: 10px;
-            }}
-            .code {{
+            }
+            .code {
                 background: #1e1e1e;
                 color: #d4d4d4;
                 padding: 20px;
@@ -267,45 +255,45 @@ def home():
                 font-family: 'Courier New', monospace;
                 font-size: 0.9em;
                 line-height: 1.6;
-            }}
-            .keyword {{ color: #569cd6; }}
-            .string {{ color: #ce9178; }}
-            .comment {{ color: #6a9955; }}
-            h2 {{ 
+            }
+            .keyword { color: #569cd6; }
+            .string { color: #ce9178; }
+            .comment { color: #6a9955; }
+            h2 { 
                 color: #333;
                 margin: 35px 0 20px 0;
                 font-size: 1.8em;
-            }}
-            h3 {{ 
+            }
+            h3 { 
                 color: #667eea;
                 margin: 20px 0 15px 0;
                 font-size: 1.3em;
-            }}
-            .warning {{
+            }
+            .warning {
                 background: #fff3cd;
                 border-left: 4px solid #ffc107;
                 padding: 15px;
                 margin: 20px 0;
                 border-radius: 5px;
-            }}
-            .success {{
+            }
+            .success {
                 background: #d4edda;
                 border-left: 4px solid #28a745;
                 padding: 15px;
                 margin: 20px 0;
                 border-radius: 5px;
-            }}
-            ul {{ 
+            }
+            ul { 
                 margin: 10px 0 10px 25px;
                 line-height: 1.8;
-            }}
-            code {{
+            }
+            code {
                 background: #f4f4f4;
                 padding: 3px 8px;
                 border-radius: 4px;
                 font-family: 'Courier New', monospace;
                 color: #e83e8c;
-            }}
+            }
         </style>
     </head>
     <body>
@@ -332,7 +320,7 @@ def home():
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Success Rate</div>
-                        <div class="stat-value">""" + f"{success_rate:.0f}" + """%</div>
+                        <div class="stat-value">""" + str(int(success_rate)) + """%</div>
                     </div>
                     <div class="stat-box">
                         <div class="stat-label">Rotations</div>
@@ -376,7 +364,7 @@ def home():
             <div class="code"><span class="keyword">import</span> requests
 
 <span class="comment"># Your Render.com URL</span>
-PROXY = <span class="string">"https://your-app.onrender.com"</span>
+PROXY = <span class="string">"https://proxy-g7kt.onrender.com"</span>
 
 <span class="comment"># Send request through proxy</span>
 response = requests.get(
@@ -389,33 +377,20 @@ response = requests.get(
             <h3>JavaScript/Node.js:</h3>
             <div class="code"><span class="keyword">const</span> axios = <span class="keyword">require</span>(<span class="string">'axios'</span>);
 
-<span class="keyword">const</span> PROXY = <span class="string">'https://your-app.onrender.com'</span>;
+<span class="keyword">const</span> PROXY = <span class="string">'https://proxy-g7kt.onrender.com'</span>;
 
-<span class="keyword">async function</span> fetchWithProxy(url) &#123;
-  <span class="keyword">const</span> res = <span class="keyword">await</span> axios.get(<span class="string">`            <h3>JavaScript/Node.js:</h3>
-            <div class="code"><span class="keyword">const</span> axios = <span class="keyword">require</span>(<span class="string">'axios'</span>);
-
-<span class="keyword">const</span> PROXY = <span class="string">'https://your-app.onrender.com'</span>;
-
-<span class="keyword">async function</span> fetchWithProxy(url) {{
-  <span class="keyword">const</span> res = <span class="keyword">await</span> axios.get(<span class="string">`$\{PROXY}/proxy`</span>, {{
-    params: {{ url }}
-  }});
-  <span class="keyword">return</span> res.data;
-}}
-
-fetchWithProxy(<span class="string">'https://api.github.com'</span>)
-  .then(data => console.log(data));</div>#123;PROXY&#125;/proxy`</span>, &#123;
-    params: &#123; url &#125;
-  &#125;);
-  <span class="keyword">return</span> res.data;
-&#125;
+<span class="keyword">async function</span> fetchWithProxy(targetUrl) {
+  <span class="keyword">const</span> response = <span class="keyword">await</span> axios.get(PROXY + <span class="string">'/proxy'</span>, {
+    params: { url: targetUrl }
+  });
+  <span class="keyword">return</span> response.data;
+}
 
 fetchWithProxy(<span class="string">'https://api.github.com'</span>)
   .then(data => console.log(data));</div>
 
             <h3>cURL:</h3>
-            <div class="code">curl "https://your-app.onrender.com/proxy?url=https://ipinfo.io/json"</div>
+            <div class="code">curl "https://proxy-g7kt.onrender.com/proxy?url=https://ipinfo.io/json"</div>
             
             <div class="success">
                 <strong>✅ Features:</strong>
@@ -430,60 +405,42 @@ fetchWithProxy(<span class="string">'https://api.github.com'</span>)
             
             <h2>🚀 Deploy Guide</h2>
             
-            <h3>Step 1: Push code to GitHub</h3>
-            <div class="code">git init
-git add .
-git commit -m "Initial commit"
-git push origin main</div>
+            <h3>Step 1: Create files</h3>
+            <div class="code">app.py              # Main code
+requirements.txt    # Dependencies
+Procfile           # Render config</div>
 
-            <h3>Step 2: Deploy on Render.com</h3>
-            <ol style="margin: 15px 0 15px 25px; line-height: 2;">
-                <li>Go to <a href="https://render.com" target="_blank">render.com</a> and sign up</li>
-                <li>Click "New +" → "Web Service"</li>
-                <li>Connect your GitHub repository</li>
-                <li>Settings:
-                    <ul>
-                        <li>Name: <code>rotating-proxy</code></li>
-                        <li>Environment: <code>Python 3</code></li>
-                        <li>Build Command: <code>pip install -r requirements.txt</code></li>
-                        <li>Start Command: <code>python app.py</code></li>
-                    </ul>
-                </li>
-                <li>Click "Create Web Service"</li>
-            </ol>
-            
-            <h3>Step 3: Keep alive with UptimeRobot</h3>
-            <ol style="margin: 15px 0 15px 25px; line-height: 2;">
-                <li>Go to <a href="https://uptimerobot.com" target="_blank">uptimerobot.com</a></li>
-                <li>Add New Monitor:
-                    <ul>
-                        <li>Monitor Type: <code>HTTP(s)</code></li>
-                        <li>URL: <code>https://your-app.onrender.com/health</code></li>
-                        <li>Monitoring Interval: <code>5 minutes</code></li>
-                    </ul>
-                </li>
-                <li>Save - Done! Server will never sleep</li>
-            </ol>
-            
-            <div class="warning">
-                <strong>⚠️ Important Notes:</strong>
-                <ul>
-                    <li>Render free tier: 750 hours/month (enough for 24/7)</li>
-                    <li>IPv6 might not work on all Render instances</li>
-                    <li>For real IPv6 rotation, consider Vultr/DigitalOcean ($5/mo)</li>
-                    <li>This is for educational purposes only</li>
-                </ul>
-            </div>
-            
-            <h2>📦 Required Files</h2>
-            
-            <h3>requirements.txt:</h3>
+            <h3>Step 2: requirements.txt</h3>
             <div class="code">Flask==3.0.0
 requests==2.31.0
 gunicorn==21.2.0</div>
 
-            <h3>Procfile (for deployment):</h3>
-            <div class="code">web: gunicorn app:app</div>
+            <h3>Step 3: Procfile</h3>
+            <div class="code">web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 4</div>
+            
+            <h3>Step 4: Push to GitHub & Deploy on Render</h3>
+            <ol style="margin: 15px 0 15px 25px; line-height: 2;">
+                <li>Push code to GitHub</li>
+                <li>Go to <a href="https://render.com" target="_blank">render.com</a></li>
+                <li>Connect GitHub repo</li>
+                <li>Deploy as Web Service</li>
+            </ol>
+            
+            <h3>Step 5: Setup UptimeRobot (Keep 24/7)</h3>
+            <ol style="margin: 15px 0 15px 25px; line-height: 2;">
+                <li>Go to <a href="https://uptimerobot.com" target="_blank">uptimerobot.com</a></li>
+                <li>Add Monitor: <code>https://your-app.onrender.com/health</code></li>
+                <li>Interval: 5 minutes</li>
+            </ol>
+            
+            <div class="warning">
+                <strong>⚠️ Important:</strong>
+                <ul>
+                    <li>Render free tier: 750 hours/month</li>
+                    <li>Use responsibly and respect rate limits</li>
+                    <li>For educational purposes only</li>
+                </ul>
+            </div>
             
             <div style="text-align: center; margin-top: 40px; padding: 20px; background: #f8f9fa; border-radius: 10px;">
                 <p style="color: #666;">Made with ❤️ for the community</p>
@@ -591,9 +548,9 @@ if __name__ == '__main__':
     print("=" * 70)
     print("🚀 Rotating Proxy Server Starting...")
     print("=" * 70)
-    print(f"⏰ Rotation: Every {ipv6_rotator.rotation_hours} hours")
-    print(f"🌐 IPv6 Pool: {len(ipv6_rotator.ipv6_pool)} addresses")
-    print(f"🔗 Port: {port}")
+    print("⏰ Rotation: Every " + str(ipv6_rotator.rotation_hours) + " hours")
+    print("🌐 IPv6 Pool: " + str(len(ipv6_rotator.ipv6_pool)) + " addresses")
+    print("🔗 Port: " + str(port))
     print("=" * 70)
     
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
