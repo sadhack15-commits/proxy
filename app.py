@@ -373,13 +373,19 @@ PROXY = <span class="string">"https://your-app.onrender.com"</span>
 
 <span class="comment"># Send request through proxy</span>
 response = requests.get(
-    <span class="string">f"{{PROXY}}/proxy"</span>,
-    params={<span class="string">"url"</span>: <span class="string">"https://httpbin.org/ip"</span>}
+    PROXY + <span class="string">"/proxy"</span>,
+    params=&#123;<span class="string">"url"</span>: <span class="string">"https://httpbin.org/ip"</span>&#125;
 )
 
 <span class="keyword">print</span>(response.json())</div>
 
             <h3>JavaScript/Node.js:</h3>
+            <div class="code"><span class="keyword">const</span> axios = <span class="keyword">require</span>(<span class="string">'axios'</span>);
+
+<span class="keyword">const</span> PROXY = <span class="string">'https://your-app.onrender.com'</span>;
+
+<span class="keyword">async function</span> fetchWithProxy(url) &#123;
+  <span class="keyword">const</span> res = <span class="keyword">await</span> axios.get(<span class="string">`            <h3>JavaScript/Node.js:</h3>
             <div class="code"><span class="keyword">const</span> axios = <span class="keyword">require</span>(<span class="string">'axios'</span>);
 
 <span class="keyword">const</span> PROXY = <span class="string">'https://your-app.onrender.com'</span>;
@@ -390,6 +396,13 @@ response = requests.get(
   }});
   <span class="keyword">return</span> res.data;
 }}
+
+fetchWithProxy(<span class="string">'https://api.github.com'</span>)
+  .then(data => console.log(data));</div>#123;PROXY&#125;/proxy`</span>, &#123;
+    params: &#123; url &#125;
+  &#125;);
+  <span class="keyword">return</span> res.data;
+&#125;
 
 fetchWithProxy(<span class="string">'https://api.github.com'</span>)
   .then(data => console.log(data));</div>
