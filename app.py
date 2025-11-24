@@ -203,7 +203,8 @@ def get_random_fingerprint():
 def rewrite_urls(html_content, target_url, proxy_url):
     """Rewrite tất cả URLs trong HTML để redirect qua proxy"""
     try:
-        soup = BeautifulSoup(html_content, 'html.parser')
+        # Parse với lxml parser - nhanh và giữ encoding tốt hơn
+        soup = BeautifulSoup(html_content, 'lxml')
         
         # Parse base URL
         from urllib.parse import urlparse
@@ -288,6 +289,7 @@ def rewrite_urls(html_content, target_url, proxy_url):
                 css = re.sub(r'url\([\'"]?([^\'")]+)[\'"]?\)', replace_css_url, css)
                 tag.string = css
         
+        # Return decoded string - ĐƠN GIẢN HÓA
         return str(soup)
     except Exception as e:
         print(f"Error rewriting URLs: {e}")
@@ -520,32 +522,19 @@ def proxy():
             target_url, 
             timeout=30, 
             allow_redirects=True,
-            verify=True
+            verify=True,
+            stream=False  # Ensure full download
         )
-        
-        # Fix encoding - Let requests auto-detect from content
-        if response.encoding == 'ISO-8859-1' and response.apparent_encoding:
-            response.encoding = response.apparent_encoding
         
         # Check content type
         content_type = response.headers.get('Content-Type', '').lower()
         
         # If HTML, rewrite URLs
         if 'text/html' in content_type:
-            # Get text with proper encoding
-            try:
-                html_text = response.text
-            except UnicodeDecodeError:
-                # Fallback: try common encodings
-                for encoding in ['utf-8', 'gbk', 'gb2312', 'big5', 'shift_jis', 'euc-kr', 'iso-8859-1']:
-                    try:
-                        html_text = response.content.decode(encoding)
-                        break
-                    except:
-                        continue
-                else:
-                    # Last resort: decode with error replacement
-                    html_text = response.content.decode('utf-8', errors='replace')
+            # Sử dụng response.text - requests tự xử lý encoding
+            # Nếu website không khai báo charset đúng, requests sẽ guess
+            response.encoding = response.apparent_encoding or response.encoding or 'utf-8'
+            html_text = response.text
             
             modified_content = rewrite_urls(html_text, target_url, proxy_url)
             
