@@ -1,124 +1,26 @@
 """
-Complete Rotating Proxy Server - Production Ready
-Deploy trên Render.com với Gunicorn
-Auto-rotate IPv6 mỗi 3 giờ
-Public proxy 24/7 với UptimeRobot
+Advanced Web Proxy Server
+- Render HTML/CSS/JS như trình duyệt thật
+- Mở được mọi website mượt mà
+- Rewrite links để redirect qua proxy
+- Anti-Cloudflare với realistic headers
 """
 
-from flask import Flask, request, Response, jsonify
+from flask import Flask, request, Response, render_template_string
 import requests
-import time
-import threading
-from datetime import datetime, timedelta
-import random
+from urllib.parse import urljoin, urlparse, quote
+import re
 import os
-from collections import defaultdict
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-class IPv6Rotator:
-    """
-    Rotate IPv6 addresses từ 1 VPS duy nhất
-    Sử dụng IPv6 subnet để generate nhiều IP
-    """
-    def __init__(self, rotation_hours=3):
-        self.rotation_hours = rotation_hours
-        self.last_rotation = datetime.now()
-        self.current_ipv6 = None
-        self.ipv6_pool = []
-        self.lock = threading.Lock()
-        
-        # Stats
-        self.stats = {
-            'total_requests': 0,
-            'successful_requests': 0,
-            'failed_requests': 0,
-            'rotations': 0,
-            'uptime_start': datetime.now().isoformat()
-        }
-        
-        # Rate limiting
-        self.rate_limits = defaultdict(list)
-        
-        # Generate IPv6 pool
-        self.generate_ipv6_pool()
-        self.rotate_ipv6()
-        
-        # Start background tasks
-        self.start_background_worker()
-    
-    def generate_ipv6_pool(self):
-        """Generate pool of IPv6 addresses"""
-        ipv6_base = "2001:db8::"
-        
-        for i in range(1000):
-            suffix = ''.join(random.choices('0123456789abcdef', k=16))
-            ipv6 = ipv6_base + suffix[:4] + ':' + suffix[4:8] + ':' + suffix[8:12] + ':' + suffix[12:16]
-            self.ipv6_pool.append(ipv6)
-        
-        print("✅ Generated " + str(len(self.ipv6_pool)) + " IPv6 addresses")
-    
-    def rotate_ipv6(self):
-        """Rotate sang IPv6 mới"""
-        with self.lock:
-            if self.ipv6_pool:
-                self.current_ipv6 = random.choice(self.ipv6_pool)
-                self.last_rotation = datetime.now()
-                self.stats['rotations'] += 1
-                print("[" + str(datetime.now()) + "] 🔄 Rotated to: " + self.current_ipv6)
-    
-    def should_rotate(self):
-        """Check if should rotate"""
-        time_diff = datetime.now() - self.last_rotation
-        return time_diff >= timedelta(hours=self.rotation_hours)
-    
-    def background_worker(self):
-        """Background worker for auto-rotation"""
-        while True:
-            try:
-                if self.should_rotate():
-                    self.rotate_ipv6()
-                time.sleep(300)
-            except Exception as e:
-                print("Background worker error: " + str(e))
-                time.sleep(60)
-    
-    def start_background_worker(self):
-        """Start background thread"""
-        thread = threading.Thread(target=self.background_worker, daemon=True)
-        thread.start()
-    
-    def check_rate_limit(self, client_ip, max_requests=60, window=60):
-        """Rate limiting: 60 requests/minute per IP"""
-        now = time.time()
-        
-        self.rate_limits[client_ip] = [
-            ts for ts in self.rate_limits[client_ip]
-            if now - ts < window
-        ]
-        
-        if len(self.rate_limits[client_ip]) >= max_requests:
-            return False
-        
-        self.rate_limits[client_ip].append(now)
-        return True
-
-# Initialize rotator
-ipv6_rotator = IPv6Rotator(rotation_hours=3)
-
-def get_anti_cloudflare_headers():
-    """Generate realistic browser headers"""
-    user_agents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
-    ]
-    
+def get_realistic_headers():
+    """Headers giả trình duyệt thật"""
     return {
-        'User-Agent': random.choice(user_agents),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
         'DNT': '1',
         'Connection': 'keep-alive',
@@ -127,326 +29,235 @@ def get_anti_cloudflare_headers():
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0'
+        'Cache-Control': 'max-age=0',
     }
+
+def rewrite_urls(html_content, target_url, proxy_url):
+    """Rewrite tất cả URLs trong HTML để redirect qua proxy"""
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        base_url = target_url.rsplit('/', target_url.count('/') - 2)[0] if target_url.count('/') > 2 else target_url
+        
+        # Rewrite <a> tags
+        for tag in soup.find_all('a', href=True):
+            original_url = tag['href']
+            if original_url.startswith(('http://', 'https://')):
+                new_url = f"{proxy_url}/proxy?url={quote(original_url)}"
+            elif original_url.startswith('//'):
+                new_url = f"{proxy_url}/proxy?url={quote('https:' + original_url)}"
+            elif original_url.startswith('/'):
+                new_url = f"{proxy_url}/proxy?url={quote(base_url + original_url)}"
+            else:
+                continue
+            tag['href'] = new_url
+        
+        # Rewrite <img> tags
+        for tag in soup.find_all('img', src=True):
+            original_url = tag['src']
+            if original_url.startswith(('http://', 'https://')):
+                tag['src'] = f"{proxy_url}/asset?url={quote(original_url)}"
+            elif original_url.startswith('//'):
+                tag['src'] = f"{proxy_url}/asset?url={quote('https:' + original_url)}"
+            elif original_url.startswith('/'):
+                tag['src'] = f"{proxy_url}/asset?url={quote(base_url + original_url)}"
+        
+        # Rewrite <link> tags (CSS)
+        for tag in soup.find_all('link', href=True):
+            original_url = tag['href']
+            if original_url.startswith(('http://', 'https://')):
+                tag['href'] = f"{proxy_url}/asset?url={quote(original_url)}"
+            elif original_url.startswith('//'):
+                tag['href'] = f"{proxy_url}/asset?url={quote('https:' + original_url)}"
+            elif original_url.startswith('/'):
+                tag['href'] = f"{proxy_url}/asset?url={quote(base_url + original_url)}"
+        
+        # Rewrite <script> tags
+        for tag in soup.find_all('script', src=True):
+            original_url = tag['src']
+            if original_url.startswith(('http://', 'https://')):
+                tag['src'] = f"{proxy_url}/asset?url={quote(original_url)}"
+            elif original_url.startswith('//'):
+                tag['src'] = f"{proxy_url}/asset?url={quote('https:' + original_url)}"
+            elif original_url.startswith('/'):
+                tag['src'] = f"{proxy_url}/asset?url={quote(base_url + original_url)}"
+        
+        # Rewrite <form> actions
+        for tag in soup.find_all('form', action=True):
+            original_url = tag['action']
+            if original_url.startswith(('http://', 'https://')):
+                tag['action'] = f"{proxy_url}/proxy?url={quote(original_url)}"
+            elif original_url.startswith('/'):
+                tag['action'] = f"{proxy_url}/proxy?url={quote(base_url + original_url)}"
+        
+        return str(soup)
+    except Exception as e:
+        print(f"Error rewriting URLs: {e}")
+        return html_content
 
 @app.route('/')
 def home():
-    """Home page with documentation"""
-    stats = ipv6_rotator.stats
-    current_ip = ipv6_rotator.current_ipv6
-    uptime = datetime.now() - datetime.fromisoformat(stats['uptime_start'])
-    
-    total_requests = stats['total_requests']
-    successful = stats['successful_requests']
-    success_rate = (successful / max(total_requests, 1) * 100)
-    rotations = stats['rotations']
-    pool_size = len(ipv6_rotator.ipv6_pool)
-    uptime_days = uptime.days
-    uptime_hours = uptime.seconds // 3600
-    
+    """Trang chủ với search box"""
     html = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>🚀 Free Rotating Proxy</title>
+        <title>🌐 Advanced Web Proxy</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { 
-                font-family: -apple-system, system-ui, sans-serif;
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
                 padding: 20px;
             }
-            .container { 
-                max-width: 1000px;
-                margin: 0 auto;
+            .container {
                 background: white;
-                padding: 40px;
+                padding: 50px;
                 border-radius: 20px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                box-shadow: 0 25px 50px rgba(0,0,0,0.3);
+                max-width: 700px;
+                width: 100%;
             }
-            h1 { 
+            h1 {
                 background: linear-gradient(135deg, #667eea, #764ba2);
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
-                font-size: 2.5em;
-                margin-bottom: 10px;
+                font-size: 3em;
                 text-align: center;
+                margin-bottom: 15px;
             }
             .subtitle {
                 text-align: center;
                 color: #666;
-                margin-bottom: 30px;
+                margin-bottom: 40px;
                 font-size: 1.1em;
             }
-            .badges {
-                text-align: center;
-                margin: 20px 0;
+            .search-box {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 30px;
             }
-            .badge {
-                display: inline-block;
-                background: #4CAF50;
-                color: white;
-                padding: 8px 16px;
-                border-radius: 20px;
-                margin: 5px;
-                font-size: 0.9em;
+            input[type="text"] {
+                flex: 1;
+                padding: 18px 20px;
+                font-size: 1.1em;
+                border: 2px solid #e0e0e0;
+                border-radius: 12px;
+                outline: none;
+                transition: all 0.3s;
+            }
+            input[type="text"]:focus {
+                border-color: #667eea;
+                box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+            }
+            button {
+                padding: 18px 35px;
+                font-size: 1.1em;
                 font-weight: 600;
-            }
-            .badge.orange { background: #ff9800; }
-            .badge.blue { background: #2196F3; }
-            .status-card { 
                 background: linear-gradient(135deg, #667eea, #764ba2);
                 color: white;
-                padding: 30px;
-                border-radius: 15px;
-                margin: 25px 0;
-                box-shadow: 0 10px 30px rgba(102,126,234,0.3);
+                border: none;
+                border-radius: 12px;
+                cursor: pointer;
+                transition: transform 0.2s;
             }
-            .stats {
+            button:hover {
+                transform: translateY(-2px);
+            }
+            .features {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
                 gap: 15px;
-                margin-top: 20px;
+                margin-top: 30px;
             }
-            .stat-box {
-                background: rgba(255,255,255,0.15);
-                padding: 20px;
-                border-radius: 10px;
-                text-align: center;
-                backdrop-filter: blur(10px);
-            }
-            .stat-label { 
-                opacity: 0.9;
-                font-size: 0.85em;
-                margin-bottom: 8px;
-            }
-            .stat-value { 
-                font-size: 1.8em;
-                font-weight: bold;
-            }
-            .endpoint {
+            .feature {
                 background: #f8f9fa;
                 padding: 20px;
-                margin: 15px 0;
-                border-radius: 10px;
-                border-left: 4px solid #667eea;
+                border-radius: 12px;
+                text-align: center;
             }
-            .method {
-                display: inline-block;
+            .feature-icon {
+                font-size: 2em;
+                margin-bottom: 10px;
+            }
+            .feature-text {
+                color: #666;
+                font-size: 0.9em;
+            }
+            .examples {
+                margin-top: 30px;
+                padding: 20px;
+                background: #f8f9fa;
+                border-radius: 12px;
+            }
+            .examples h3 {
+                color: #667eea;
+                margin-bottom: 15px;
+            }
+            .example-link {
+                display: block;
+                padding: 10px;
+                margin: 8px 0;
+                background: white;
+                border-radius: 8px;
+                color: #667eea;
+                text-decoration: none;
+                transition: all 0.2s;
+            }
+            .example-link:hover {
                 background: #667eea;
                 color: white;
-                padding: 5px 12px;
-                border-radius: 5px;
-                font-weight: bold;
-                font-size: 0.85em;
-                margin-right: 10px;
-            }
-            .code {
-                background: #1e1e1e;
-                color: #d4d4d4;
-                padding: 20px;
-                border-radius: 10px;
-                overflow-x: auto;
-                margin: 15px 0;
-                font-family: 'Courier New', monospace;
-                font-size: 0.9em;
-                line-height: 1.6;
-            }
-            .keyword { color: #569cd6; }
-            .string { color: #ce9178; }
-            .comment { color: #6a9955; }
-            h2 { 
-                color: #333;
-                margin: 35px 0 20px 0;
-                font-size: 1.8em;
-            }
-            h3 { 
-                color: #667eea;
-                margin: 20px 0 15px 0;
-                font-size: 1.3em;
-            }
-            .warning {
-                background: #fff3cd;
-                border-left: 4px solid #ffc107;
-                padding: 15px;
-                margin: 20px 0;
-                border-radius: 5px;
-            }
-            .success {
-                background: #d4edda;
-                border-left: 4px solid #28a745;
-                padding: 15px;
-                margin: 20px 0;
-                border-radius: 5px;
-            }
-            ul { 
-                margin: 10px 0 10px 25px;
-                line-height: 1.8;
-            }
-            code {
-                background: #f4f4f4;
-                padding: 3px 8px;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-                color: #e83e8c;
+                transform: translateX(5px);
             }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🚀 Free Rotating Proxy Server</h1>
-            <p class="subtitle">Deploy on Render.com • 24/7 Uptime • IPv6 Rotation</p>
+            <h1>🌐 Web Proxy</h1>
+            <p class="subtitle">Duyệt web ẩn danh, mượt mà, không giới hạn</p>
             
-            <div class="badges">
-                <span class="badge">✅ Free Forever</span>
-                <span class="badge orange">🔄 Auto-Rotate 3h</span>
-                <span class="badge blue">🛡️ Anti-Cloudflare</span>
-            </div>
+            <form class="search-box" action="/proxy" method="GET">
+                <input 
+                    type="text" 
+                    name="url" 
+                    placeholder="Nhập URL (ví dụ: https://google.com)" 
+                    required
+                    value=""
+                >
+                <button type="submit">🚀 Truy cập</button>
+            </form>
             
-            <div class="status-card">
-                <h3 style="color: white; margin: 0 0 20px 0;">📊 Server Status</h3>
-                <div class="stats">
-                    <div class="stat-box">
-                        <div class="stat-label">Current IPv6</div>
-                        <div class="stat-value" style="font-size: 0.8em;">""" + current_ip[:20] + """...</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Total Requests</div>
-                        <div class="stat-value">""" + str(total_requests) + """</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Success Rate</div>
-                        <div class="stat-value">""" + str(int(success_rate)) + """%</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Rotations</div>
-                        <div class="stat-value">""" + str(rotations) + """</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">Uptime</div>
-                        <div class="stat-value">""" + str(uptime_days) + """d """ + str(uptime_hours) + """h</div>
-                    </div>
-                    <div class="stat-box">
-                        <div class="stat-label">IPv6 Pool</div>
-                        <div class="stat-value">""" + str(pool_size) + """</div>
-                    </div>
+            <div class="features">
+                <div class="feature">
+                    <div class="feature-icon">⚡</div>
+                    <div class="feature-text">Siêu mượt</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🔒</div>
+                    <div class="feature-text">Ẩn danh</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🌍</div>
+                    <div class="feature-text">Mọi website</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🎯</div>
+                    <div class="feature-text">Miễn phí</div>
                 </div>
             </div>
             
-            <h2>📖 API Documentation</h2>
-            
-            <div class="endpoint">
-                <div><span class="method">GET</span><strong>/proxy</strong></div>
-                <p style="margin: 10px 0;">Forward request qua rotating proxy</p>
-                <strong>Parameters:</strong>
-                <ul>
-                    <li><code>url</code> - Target URL (required)</li>
-                </ul>
-            </div>
-            
-            <div class="endpoint">
-                <div><span class="method">GET</span><strong>/status</strong></div>
-                <p style="margin: 10px 0;">Check server status & stats</p>
-            </div>
-            
-            <div class="endpoint">
-                <div><span class="method">POST</span><strong>/rotate</strong></div>
-                <p style="margin: 10px 0;">Force rotate IPv6 immediately</p>
-            </div>
-            
-            <h2>💻 Usage Examples</h2>
-            
-            <h3>Python:</h3>
-            <div class="code"><span class="keyword">import</span> requests
-
-<span class="comment"># Your Render.com URL</span>
-PROXY = <span class="string">"https://proxy-g7kt.onrender.com"</span>
-
-<span class="comment"># Send request through proxy</span>
-response = requests.get(
-    PROXY + <span class="string">"/proxy"</span>,
-    params={<span class="string">"url"</span>: <span class="string">"https://httpbin.org/ip"</span>}
-)
-
-<span class="keyword">print</span>(response.json())</div>
-
-            <h3>JavaScript/Node.js:</h3>
-            <div class="code"><span class="keyword">const</span> axios = <span class="keyword">require</span>(<span class="string">'axios'</span>);
-
-<span class="keyword">const</span> PROXY = <span class="string">'https://proxy-g7kt.onrender.com'</span>;
-
-<span class="keyword">async function</span> fetchWithProxy(targetUrl) {
-  <span class="keyword">const</span> response = <span class="keyword">await</span> axios.get(PROXY + <span class="string">'/proxy'</span>, {
-    params: { url: targetUrl }
-  });
-  <span class="keyword">return</span> response.data;
-}
-
-fetchWithProxy(<span class="string">'https://api.github.com'</span>)
-  .then(data => console.log(data));</div>
-
-            <h3>cURL:</h3>
-            <div class="code">curl "https://proxy-g7kt.onrender.com/proxy?url=https://ipinfo.io/json"</div>
-            
-            <div class="success">
-                <strong>✅ Features:</strong>
-                <ul>
-                    <li>Free hosting on Render.com (750 hours/month)</li>
-                    <li>Auto IPv6 rotation every 3 hours</li>
-                    <li>Anti-Cloudflare headers</li>
-                    <li>Rate limiting: 60 req/min per IP</li>
-                    <li>24/7 uptime with UptimeRobot</li>
-                </ul>
-            </div>
-            
-            <h2>🚀 Deploy Guide</h2>
-            
-            <h3>Step 1: Create files</h3>
-            <div class="code">app.py              # Main code
-requirements.txt    # Dependencies
-Procfile           # Render config</div>
-
-            <h3>Step 2: requirements.txt</h3>
-            <div class="code">Flask==3.0.0
-requests==2.31.0
-gunicorn==21.2.0</div>
-
-            <h3>Step 3: Procfile</h3>
-            <div class="code">web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 4</div>
-            
-            <h3>Step 4: Push to GitHub & Deploy on Render</h3>
-            <ol style="margin: 15px 0 15px 25px; line-height: 2;">
-                <li>Push code to GitHub</li>
-                <li>Go to <a href="https://render.com" target="_blank">render.com</a></li>
-                <li>Connect GitHub repo</li>
-                <li>Deploy as Web Service</li>
-            </ol>
-            
-            <h3>Step 5: Setup UptimeRobot (Keep 24/7)</h3>
-            <ol style="margin: 15px 0 15px 25px; line-height: 2;">
-                <li>Go to <a href="https://uptimerobot.com" target="_blank">uptimerobot.com</a></li>
-                <li>Add Monitor: <code>https://your-app.onrender.com/health</code></li>
-                <li>Interval: 5 minutes</li>
-            </ol>
-            
-            <div class="warning">
-                <strong>⚠️ Important:</strong>
-                <ul>
-                    <li>Render free tier: 750 hours/month</li>
-                    <li>Use responsibly and respect rate limits</li>
-                    <li>For educational purposes only</li>
-                </ul>
-            </div>
-            
-            <div style="text-align: center; margin-top: 40px; padding: 20px; background: #f8f9fa; border-radius: 10px;">
-                <p style="color: #666;">Made with ❤️ for the community</p>
-                <p style="color: #999; font-size: 0.9em; margin-top: 10px;">
-                    Free • Open Source • No Limits
-                </p>
+            <div class="examples">
+                <h3>📌 Thử ngay:</h3>
+                <a class="example-link" href="/proxy?url=https://google.com">🔍 Google.com</a>
+                <a class="example-link" href="/proxy?url=https://youtube.com">📺 YouTube.com</a>
+                <a class="example-link" href="/proxy?url=https://facebook.com">📘 Facebook.com</a>
+                <a class="example-link" href="/proxy?url=https://github.com">💻 GitHub.com</a>
+                <a class="example-link" href="/proxy?url=https://vio.edu.vn">📚 VioEdu.vn</a>
             </div>
         </div>
     </body>
@@ -456,101 +267,89 @@ gunicorn==21.2.0</div>
 
 @app.route('/proxy')
 def proxy():
-    """Main proxy endpoint"""
-    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    
-    # Rate limiting
-    if not ipv6_rotator.check_rate_limit(client_ip):
-        return jsonify({
-            'error': 'Rate limit exceeded',
-            'message': 'Maximum 60 requests per minute'
-        }), 429
-    
-    # Get target URL
+    """Main proxy endpoint - render full website"""
     target_url = request.args.get('url')
-    if not target_url:
-        return jsonify({
-            'error': 'Missing parameter',
-            'message': 'Please provide "url" parameter'
-        }), 400
     
-    # Update stats
-    ipv6_rotator.stats['total_requests'] += 1
+    if not target_url:
+        return "Missing URL parameter", 400
+    
+    # Add https:// if missing
+    if not target_url.startswith(('http://', 'https://')):
+        target_url = 'https://' + target_url
     
     try:
-        # Create session with anti-cloudflare headers
+        # Get proxy URL
+        proxy_url = request.url_root.rstrip('/')
+        
+        # Create session with realistic headers
         session = requests.Session()
-        session.headers.update(get_anti_cloudflare_headers())
+        session.headers.update(get_realistic_headers())
         
-        # Send request
-        response = session.get(
-            target_url,
-            timeout=30,
-            allow_redirects=True
-        )
+        # Get the page
+        response = session.get(target_url, timeout=30, allow_redirects=True)
         
-        # Update stats
-        ipv6_rotator.stats['successful_requests'] += 1
+        # Check content type
+        content_type = response.headers.get('Content-Type', '')
         
-        # Return response
+        # If HTML, rewrite URLs
+        if 'text/html' in content_type:
+            modified_content = rewrite_urls(response.text, target_url, proxy_url)
+            return Response(
+                modified_content,
+                status=response.status_code,
+                content_type='text/html; charset=utf-8'
+            )
+        else:
+            # Return as-is for other content types
+            return Response(
+                response.content,
+                status=response.status_code,
+                headers=dict(response.headers)
+            )
+            
+    except requests.exceptions.Timeout:
+        return "Request timeout - Website took too long to respond", 504
+    except requests.exceptions.RequestException as e:
+        return f"Error loading website: {str(e)}", 502
+    except Exception as e:
+        return f"Unexpected error: {str(e)}", 500
+
+@app.route('/asset')
+def asset():
+    """Proxy for assets (images, CSS, JS)"""
+    asset_url = request.args.get('url')
+    
+    if not asset_url:
+        return "Missing URL parameter", 400
+    
+    try:
+        session = requests.Session()
+        session.headers.update(get_realistic_headers())
+        
+        response = session.get(asset_url, timeout=15)
+        
         return Response(
             response.content,
             status=response.status_code,
-            headers=dict(response.headers)
+            headers={
+                'Content-Type': response.headers.get('Content-Type', 'application/octet-stream'),
+                'Cache-Control': 'public, max-age=3600'
+            }
         )
-        
-    except requests.exceptions.Timeout:
-        ipv6_rotator.stats['failed_requests'] += 1
-        return jsonify({
-            'error': 'Request timeout',
-            'message': 'Target server took too long to respond'
-        }), 504
-        
-    except requests.exceptions.RequestException as e:
-        ipv6_rotator.stats['failed_requests'] += 1
-        return jsonify({
-            'error': 'Request failed',
-            'message': str(e)
-        }), 502
-
-@app.route('/status')
-def status():
-    """Get server status"""
-    return jsonify({
-        'status': 'active',
-        'current_ipv6': ipv6_rotator.current_ipv6,
-        'last_rotation': ipv6_rotator.last_rotation.isoformat(),
-        'rotation_interval_hours': ipv6_rotator.rotation_hours,
-        'stats': ipv6_rotator.stats,
-        'ipv6_pool_size': len(ipv6_rotator.ipv6_pool)
-    })
-
-@app.route('/rotate', methods=['POST'])
-def force_rotate():
-    """Force rotate IPv6"""
-    ipv6_rotator.rotate_ipv6()
-    return jsonify({
-        'message': 'IPv6 rotated successfully',
-        'new_ipv6': ipv6_rotator.current_ipv6
-    })
+    except Exception as e:
+        return f"Error loading asset: {str(e)}", 502
 
 @app.route('/health')
 def health():
-    """Health check for UptimeRobot"""
-    return jsonify({
-        'status': 'healthy',
-        'timestamp': datetime.now().isoformat()
-    }), 200
+    """Health check"""
+    return {'status': 'healthy'}, 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
-    
     print("=" * 70)
-    print("🚀 Rotating Proxy Server Starting...")
+    print("🌐 Advanced Web Proxy Server")
     print("=" * 70)
-    print("⏰ Rotation: Every " + str(ipv6_rotator.rotation_hours) + " hours")
-    print("🌐 IPv6 Pool: " + str(len(ipv6_rotator.ipv6_pool)) + " addresses")
-    print("🔗 Port: " + str(port))
+    print(f"🔗 Port: {port}")
+    print("🚀 Ready to browse any website anonymously!")
     print("=" * 70)
-    
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
