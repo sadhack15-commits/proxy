@@ -523,12 +523,31 @@ def proxy():
             verify=True
         )
         
+        # Fix encoding - Let requests auto-detect from content
+        if response.encoding == 'ISO-8859-1' and response.apparent_encoding:
+            response.encoding = response.apparent_encoding
+        
         # Check content type
         content_type = response.headers.get('Content-Type', '').lower()
         
         # If HTML, rewrite URLs
         if 'text/html' in content_type:
-            modified_content = rewrite_urls(response.text, target_url, proxy_url)
+            # Get text with proper encoding
+            try:
+                html_text = response.text
+            except UnicodeDecodeError:
+                # Fallback: try common encodings
+                for encoding in ['utf-8', 'gbk', 'gb2312', 'big5', 'shift_jis', 'euc-kr', 'iso-8859-1']:
+                    try:
+                        html_text = response.content.decode(encoding)
+                        break
+                    except:
+                        continue
+                else:
+                    # Last resort: decode with error replacement
+                    html_text = response.content.decode('utf-8', errors='replace')
+            
+            modified_content = rewrite_urls(html_text, target_url, proxy_url)
             
             # Return with proper headers
             resp = Response(
